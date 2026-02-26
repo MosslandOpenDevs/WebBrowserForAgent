@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+
+# Screenshots (may contain sensitive data)
+screenshots/
+
+# Claude Code
+.claude/
+
+# npm pack artifacts
+*.tgz

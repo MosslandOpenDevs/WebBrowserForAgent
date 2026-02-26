@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Page</title>
+  <style>
+    body { margin: 20px; font-family: sans-serif; }
+    .hidden { display: none; }
+    input, select, textarea { margin: 5px 0; display: block; }
+    button { margin: 5px 0; }
+  </style>
+</head>
+<body>
+  <h1>Test Page</h1>
+
+  <a href="/about" id="link-about">About</a>
+  <a href="/contact" id="link-contact">Contact</a>
+
+  <button id="btn-login">Login</button>
+  <button id="btn-submit" type="submit">Submit</button>
+  <button class="hidden" id="btn-hidden">Hidden Button</button>
+
+  <form>
+    <input type="text" id="input-email" placeholder="Email address">
+    <input type="password" id="input-password" placeholder="Password">
+    <input type="checkbox" id="check-remember"> Remember me
+    <select id="select-lang">
+      <option>English</option>
+      <option>한국어</option>
+      <option>日本語</option>
+    </select>
+    <textarea id="textarea-message" placeholder="Your message"></textarea>
+  </form>
+
+  <div role="button" id="role-btn" tabindex="0">Custom Button</div>
+  <div contenteditable="true" id="editable">Edit me</div>
+</body>
+</html>

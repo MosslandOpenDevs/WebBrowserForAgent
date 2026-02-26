@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Iframe Test</title>
+  <style>body { margin: 20px; }</style>
+</head>
+<body>
+  <h1>Main Page</h1>
+  <button id="main-btn">Main Button</button>
+  <iframe id="child-frame" srcdoc='
+    <!DOCTYPE html>
+    <html>
+    <head><style>body { margin: 10px; }</style></head>
+    <body>
+      <button id="iframe-btn">Iframe Button</button>
+      <input type="text" id="iframe-input" placeholder="Iframe Input">
+    </body>
+    </html>
+  ' width="400" height="200" style="border: 1px solid #ccc;"></iframe>
+</body>
+</html>

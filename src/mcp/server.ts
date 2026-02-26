@@ -15,6 +15,7 @@ import { registerScreenshotTools } from './tools/screenshot.js';
 import { registerAccessibilityTools } from './tools/accessibility.js';
 import { registerMouseTools } from './tools/mouse.js';
 import { registerKeyboardTools } from './tools/keyboard.js';
+import { registerPrompts } from './prompts.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
@@ -39,6 +40,7 @@ registerScreenshotTools(server, browserManager, screenshotEngine);
 registerAccessibilityTools(server, browserManager, accessibilityMapper);
 registerMouseTools(server, browserManager, inputController, screenshotEngine, accessibilityMapper);
 registerKeyboardTools(server, browserManager, inputController, screenshotEngine);
+registerPrompts(server);
 
 // Transport selection
 const transportArg = process.argv.includes('--transport')

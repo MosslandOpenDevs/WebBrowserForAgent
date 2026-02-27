@@ -14,6 +14,7 @@ export {
 
 export {
   AccessibilityMapper,
+  createAccessibilityMap,
   type AccessibilityElement,
   type AccessibilityMap,
 } from './core/accessibility.js';

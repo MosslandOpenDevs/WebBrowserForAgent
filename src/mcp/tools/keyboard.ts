@@ -18,7 +18,7 @@ export function registerKeyboardTools(
 ): void {
   server.tool(
     'browser_type',
-    'Type text into the currently focused element',
+    'Type text into the currently focused element. Click an input field first with browser_click, then use this to type.',
     {
       text: z
         .string()

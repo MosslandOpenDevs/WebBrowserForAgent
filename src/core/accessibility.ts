@@ -18,6 +18,21 @@ export interface AccessibilityMap {
   elements: AccessibilityElement[];
   totalCount: number;
   timestamp: number;
+
+  /** Find the first element whose name contains the given text (case-insensitive). */
+  findByText(text: string): AccessibilityElement | undefined;
+
+  /** Find all elements whose name contains the given text (case-insensitive). */
+  findAllByText(text: string): AccessibilityElement[];
+
+  /** Find the first element matching the given role (e.g., 'button', 'input[text]', 'link', 'clickable'). */
+  findByRole(role: string): AccessibilityElement | undefined;
+
+  /** Find all elements matching the given role. */
+  findAllByRole(role: string): AccessibilityElement[];
+
+  /** Find an element by its index number. */
+  findByIndex(index: number): AccessibilityElement | undefined;
 }
 
 interface RawElementData {
@@ -52,6 +67,38 @@ const INTERACTIVE_SELECTORS = [
   '[contenteditable="true"]',
 ].join(', ');
 
+export function createAccessibilityMap(elements: AccessibilityElement[]): AccessibilityMap {
+  const lowerName = (el: AccessibilityElement) => el.name.toLowerCase();
+
+  return {
+    elements,
+    totalCount: elements.length,
+    timestamp: Date.now(),
+
+    findByText(text: string): AccessibilityElement | undefined {
+      const t = text.toLowerCase();
+      return elements.find((el) => lowerName(el).includes(t));
+    },
+
+    findAllByText(text: string): AccessibilityElement[] {
+      const t = text.toLowerCase();
+      return elements.filter((el) => lowerName(el).includes(t));
+    },
+
+    findByRole(role: string): AccessibilityElement | undefined {
+      return elements.find((el) => el.role === role);
+    },
+
+    findAllByRole(role: string): AccessibilityElement[] {
+      return elements.filter((el) => el.role === role);
+    },
+
+    findByIndex(index: number): AccessibilityElement | undefined {
+      return elements.find((el) => el.index === index);
+    },
+  };
+}
+
 export class AccessibilityMapper {
   async generateMap(
     page: Page,
@@ -75,11 +122,7 @@ export class AccessibilityMapper {
       elements[i].index = i;
     }
 
-    return {
-      elements,
-      totalCount: elements.length,
-      timestamp: Date.now(),
-    };
+    return createAccessibilityMap(elements);
   }
 
   private async extractFromFrame(

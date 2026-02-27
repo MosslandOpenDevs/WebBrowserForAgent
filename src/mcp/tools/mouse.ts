@@ -51,7 +51,7 @@ export function registerMouseTools(
 ): void {
   server.tool(
     'browser_click',
-    'Click at a position (coordinates or element index)',
+    'Click at a position. Use {elementIndex: N} from the accessibility map, or {x, y} pixel coordinates.',
     { target: clickTargetSchema },
     async (params) => {
       try {
@@ -159,7 +159,7 @@ export function registerMouseTools(
 
   server.tool(
     'browser_scroll',
-    'Scroll the page at a position',
+    'Scroll the page. Use deltaY=500 to scroll down, deltaY=-500 to scroll up. No target needed for basic page scrolling.',
     {
       target: clickTargetSchema
         .optional()

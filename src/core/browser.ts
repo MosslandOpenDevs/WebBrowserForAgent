@@ -10,7 +10,10 @@ import {
 import { BrowserNotLaunchedError, NoActivePageError, TabIndexOutOfBoundsError } from './errors.js';
 
 export interface BrowserLaunchOptions {
+  /** Browser engine to use. Alias: `engine` */
   browser?: 'chromium' | 'firefox' | 'webkit';
+  /** Alias for `browser` */
+  engine?: 'chromium' | 'firefox' | 'webkit';
   headless?: boolean;
   viewport?: { width: number; height: number };
   device?: string;
@@ -53,7 +56,7 @@ export class BrowserManager {
       await this.close();
     }
 
-    const browserType = options.browser ?? 'chromium';
+    const browserType = options.browser ?? options.engine ?? 'chromium';
     const launcher = { chromium, firefox, webkit }[browserType];
     this.browser = await launcher.launch({ headless: options.headless ?? true });
 

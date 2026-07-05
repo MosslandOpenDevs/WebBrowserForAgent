@@ -290,6 +290,35 @@ src/
 └── index.ts                 # Library re-exports
 ```
 
+## Roadmap & Future Directions
+
+WebBrowserForAgent is intentionally small and composable, and it is far from finished. The items below are directions we think are worth exploring rather than a committed plan — most grow directly out of the current [Limitations](#limitations). Discussion, issues, and PRs are all welcome.
+
+### Capabilities
+
+- **Concurrent sessions over HTTP.** Today a single browser is shared per server process. An opt-in mode giving each MCP session its own browser context (or a pooled browser) would let one HTTP server drive multiple agents in isolation, instead of running a process per client.
+- **File upload & download.** Support `<input type="file">` uploads and capture downloads so agents can move data into and out of pages.
+- **Wait primitives.** A `browser_wait_for` (selector / text / network-idle) so agents can synchronize on dynamic SPA content instead of relying on fixed delays.
+- **Dialog & auth handling.** Intercept `alert` / `confirm` / `prompt` and handle HTTP Basic Auth popups.
+- **Session persistence.** Save and restore cookies and storage state (Playwright `storageState`) so logins survive restarts, ideally with named profiles.
+
+### Observability
+
+- **Console & network access.** Expose console logs and network requests/responses (including failures) as tools, so agents can *debug* pages, not just drive them.
+- **Accessibility map diffs.** Return "what changed" between snapshots, plus richer element state (disabled / focused / expanded, scroll offsets, off-viewport hints), to cut token usage on busy pages.
+
+### Robustness & performance
+
+- **Built-in HTTP auth.** An optional token / API-key layer so remote deployment doesn't strictly require a reverse proxy.
+- **Faster extraction.** Concurrent per-frame extraction and incremental map updates for very dense pages.
+
+### Quality & infrastructure
+
+- **Cross-engine CI.** A GitHub Actions matrix that actually exercises Chromium, Firefox, and WebKit — the toolkit targets all three, but only Chromium is covered today.
+- **MCP handler tests.** Integration tests around the tool/transport layer, complementing the current core-class coverage.
+
+None of this is set in stone. If a direction here — or one we haven't thought of — matters to you, open an issue or a PR and let's talk.
+
 ## License
 
 [MIT](./LICENSE)

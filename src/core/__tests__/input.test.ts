@@ -139,4 +139,58 @@ describe('InputController', () => {
       // No error means success
     });
   });
+
+  describe('elementIndex-based interactions', () => {
+    it('should resolve elementIndex for doubleClick, rightClick, and mouseMove', async () => {
+      const page = bm.getActivePage();
+      await page.goto(baseUrl + '/simple.html');
+      const viewport = bm.getViewport();
+      const map = await mapper.generateMap(page, viewport);
+      const btn = map.elements.find((e) => e.name === 'Login');
+      expect(btn).toBeDefined();
+
+      await input.doubleClick(page, { elementIndex: btn!.index }, map);
+      await input.rightClick(page, { elementIndex: btn!.index }, map);
+      await input.mouseMove(page, { elementIndex: btn!.index }, map);
+    });
+
+    it('should resolve elementIndex for both drag endpoints', async () => {
+      const page = bm.getActivePage();
+      await page.goto(baseUrl + '/simple.html');
+      const viewport = bm.getViewport();
+      const map = await mapper.generateMap(page, viewport);
+      const from = map.elements.find((e) => e.name === 'Login');
+      const to = map.elements.find((e) => e.name === 'Submit');
+      expect(from).toBeDefined();
+      expect(to).toBeDefined();
+
+      await input.drag(
+        page,
+        { from: { elementIndex: from!.index }, to: { elementIndex: to!.index } },
+        map,
+      );
+    });
+
+    it('should resolve an elementIndex scroll target', async () => {
+      const page = bm.getActivePage();
+      await page.goto(baseUrl + '/simple.html');
+      const viewport = bm.getViewport();
+      const map = await mapper.generateMap(page, viewport);
+      const btn = map.elements.find((e) => e.name === 'Login');
+      expect(btn).toBeDefined();
+
+      await input.scroll(page, { target: { elementIndex: btn!.index }, deltaY: 100 }, map);
+    });
+
+    it('should throw for an out-of-range elementIndex', async () => {
+      const page = bm.getActivePage();
+      await page.goto(baseUrl + '/simple.html');
+      const viewport = bm.getViewport();
+      const map = await mapper.generateMap(page, viewport);
+
+      await expect(input.doubleClick(page, { elementIndex: 9999 }, map)).rejects.toThrow(
+        ElementIndexOutOfBoundsError,
+      );
+    });
+  });
 });

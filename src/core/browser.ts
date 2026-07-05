@@ -10,13 +10,12 @@ import {
 import { BrowserNotLaunchedError, NoActivePageError, TabIndexOutOfBoundsError } from './errors.js';
 
 export interface BrowserLaunchOptions {
-  /** Browser engine to use. Alias: `engine` */
+  /** Browser engine to use. Defaults to `chromium`. */
   browser?: 'chromium' | 'firefox' | 'webkit';
-  /** Alias for `browser` */
-  engine?: 'chromium' | 'firefox' | 'webkit';
   headless?: boolean;
   viewport?: { width: number; height: number };
   device?: string;
+  /** Screenshot scale (Retina/high-DPI). Clamped to 1x–2x. Applied at launch only. */
   deviceScaleFactor?: number;
 }
 
@@ -56,7 +55,7 @@ export class BrowserManager {
       await this.close();
     }
 
-    const browserType = options.browser ?? options.engine ?? 'chromium';
+    const browserType = options.browser ?? 'chromium';
     const launcher = { chromium, firefox, webkit }[browserType];
     this.browser = await launcher.launch({ headless: options.headless ?? true });
 
@@ -92,8 +91,20 @@ export class BrowserManager {
       contextOptions.viewport = { width: 1280, height: 720 };
     }
 
-    if (options.deviceScaleFactor) {
-      contextOptions.deviceScaleFactor = Math.max(1, Math.min(2, options.deviceScaleFactor));
+    // Clamp the device scale factor to 1x–2x. Device presets carry their own
+    // (e.g. iPhone 14 = 3x, Pixel 7 = 2.625x); leaving those unclamped would
+    // blow past the intended screenshot size ceiling, so cap whatever ended up
+    // in contextOptions — whether caller-supplied or descriptor-derived.
+    const scaleFactor =
+      options.deviceScaleFactor ?? (contextOptions.deviceScaleFactor as number | undefined);
+    if (scaleFactor !== undefined) {
+      contextOptions.deviceScaleFactor = Math.max(1, Math.min(2, scaleFactor));
+    }
+
+    // `isMobile` is a Chromium-only context option; passing it to Firefox throws
+    // on newContext(), which would turn any mobile preset into a launch failure.
+    if (browserType === 'firefox') {
+      delete contextOptions.isMobile;
     }
 
     this.context = await this.browser.newContext(contextOptions);

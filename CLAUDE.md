@@ -122,17 +122,19 @@ AI Agent ← base64 PNG + accessibility map ← ScreenshotEngine ←────
 
 ### 디바이스 프리셋
 
-`browser_resize`에서 `{ device }` 파라미터로 모바일/태블릿 뷰포트를 간편 설정. Playwright의 `devices` 레지스트리 기반.
+`browser_launch` 및 `browser_resize`에서 `{ device }` 파라미터로 모바일/태블릿 뷰포트를 간편 설정. Playwright의 `devices` 레지스트리 기반. (뷰포트 값은 설치된 Playwright 버전을 따르며, 아래는 1.58.x 기준 원본 디바이스 뷰포트 — 클램핑 전.)
 
-| 프리셋 | 뷰포트 | userAgent | 비고 |
-|--------|--------|-----------|------|
-| `desktop` | 1280×720 | Desktop Chrome | 기본값 |
-| `iphone-14` | 390×844 | Mobile Safari | iOS 모바일 |
-| `iphone-14-landscape` | 844×390 | Mobile Safari | 가로 모드 |
-| `pixel-7` | 412×915 | Mobile Chrome | Android 모바일 |
-| `ipad-pro-11` | 834×720 | Mobile Safari | 태블릿 (높이 720 캡) |
+| 프리셋 | 디바이스 뷰포트 | userAgent | 적용값 (클램핑 후) |
+|--------|-----------------|-----------|--------------------|
+| `desktop` | 1280×720 | Desktop Chrome | 1280×720 |
+| `iphone-14` | 390×664 | Mobile Safari | 390×664 |
+| `iphone-14-landscape` | 750×340 | Mobile Safari | 750×480 (높이 480 캡) |
+| `pixel-7` | 412×839 | Mobile Chrome | 412×720 (높이 720 캡) |
+| `ipad-pro-11` | 834×1194 | Mobile Safari | 834×720 (높이 720 캡) |
 
-- 디바이스 프리셋 적용 시 `userAgent`, `hasTouch`, `isMobile` 등 Playwright 디바이스 속성도 함께 설정
+- **`browser_launch({ device })`만** `userAgent`, `hasTouch`, `isMobile` 등 전체 Playwright 디바이스 에뮬레이션을 적용한다. `browser_resize({ device })`는 컨텍스트를 재생성하지 않으므로 **뷰포트 크기만** 바꾸고 userAgent/터치/isMobile은 변경하지 않는다.
+- 디바이스 프리셋의 `deviceScaleFactor`(예: iPhone 14 = 3x)는 스크린샷 크기 상한 유지를 위해 launch 시 2x로 클램핑된다. (스케일은 launch 시점에만 설정 가능)
+- `isMobile`은 Chromium 전용 옵션이므로 firefox 엔진에서는 자동 제거된다 (webkit은 지원).
 - agent가 반응형 웹 디자인 테스트, 모바일 전용 UI 확인 등에 활용
 - 프리셋 높이가 720을 초과하는 경우 720으로 클램핑 (스크린샷 크기 상한 유지)
 - 커스텀 뷰포트도 가능: `browser_resize({ width: 375, height: 667 })` — 범위 내 자유 설정

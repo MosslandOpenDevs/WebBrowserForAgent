@@ -119,6 +119,44 @@ describe('BrowserManager', () => {
     expect(bm.getPageCount()).toBe(2);
   });
 
+  it('should decrement active index when a lower-indexed tab is closed', async () => {
+    bm = new BrowserManager();
+    await bm.launch(); // tab 0
+    await bm.newTab(); // tab 1
+    await bm.newTab(); // tab 2, active = 2
+    expect(bm.getActivePageIndex()).toBe(2);
+
+    await bm.closeTab(0); // removing a lower index shifts the active tab down
+    expect(bm.getPageCount()).toBe(2);
+    expect(bm.getActivePageIndex()).toBe(1);
+  });
+
+  it('should auto-detect an externally opened tab without switching, and flag it as new', async () => {
+    bm = new BrowserManager();
+    await bm.launch();
+    const page = bm.getActivePage();
+    // A trusted click on a target=_blank link opens a new tab via the browser
+    // (not our newTab()), exercising the context 'page' auto-detection path.
+    await page.setContent(`<a id="ext" href="${baseUrl}/simple.html" target="_blank">open</a>`);
+    await page.click('#ext');
+    await page.waitForTimeout(500);
+
+    expect(bm.getPageCount()).toBe(2);
+    // Active tab must NOT change automatically
+    expect(bm.getActivePageIndex()).toBe(0);
+
+    const tabs = await bm.listTabs();
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0].isActive).toBe(true);
+    expect(tabs[1].isActive).toBe(false);
+    expect(tabs[1].isNew).toBe(true);
+
+    // Switching to it clears the isNew flag
+    await bm.switchTab(1);
+    const tabsAfter = await bm.listTabs();
+    expect(tabsAfter[1].isNew).toBe(false);
+  });
+
   it('should close browser when last tab is closed', async () => {
     bm = new BrowserManager();
     await bm.launch();

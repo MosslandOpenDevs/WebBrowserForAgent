@@ -72,8 +72,10 @@ export function registerScreenshotTools(
     },
     async (params) => {
       try {
-        const page = browserManager.getActivePage();
-        await screenshotEngine.startRecording(page, {
+        // Validate the browser is up, then let the recorder follow the active
+        // tab so tab switches / closes don't leave it capturing a stale page.
+        browserManager.getActivePage();
+        await screenshotEngine.startRecording(() => browserManager.getActivePage(), {
           fps: params.fps,
           bufferSize: params.bufferSize,
         });

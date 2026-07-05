@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Clickable Test</title>
+  <style>
+    body { margin: 20px; font-family: sans-serif; }
+    .card { cursor: pointer; padding: 10px; border: 1px solid #ccc; margin: 5px 0; }
+  </style>
+</head>
+<body>
+  <h1>Clickable Test</h1>
+
+  <!-- Non-standard clickable: cursor:pointer div with its own text -->
+  <div class="card" id="pointer-card">Open settings</div>
+
+  <!-- Non-standard clickable: onclick handler -->
+  <div id="onclick-div" onclick="void 0">Run action</div>
+
+  <!--
+    Wrapper whose direct text is LONGER than 100 chars and contains an
+    interactive child whose text also exceeds 100 chars. This is the exact
+    shape that used to desync the two DOM walks (truncated vs. untruncated
+    text comparison) and misalign metadata with coordinates.
+  -->
+  <div class="card" id="long-wrapper">
+    This wrapper has a very very very very very very very very very very very very very very long label
+    <a href="/deep-link" id="long-child">This wrapper has a very very very very very very very very very very very very very very long label plus a link</a>
+  </div>
+
+  <!-- A trailing standard button to confirm indices stay aligned afterwards -->
+  <button id="tail-btn">Tail Button</button>
+</body>
+</html>

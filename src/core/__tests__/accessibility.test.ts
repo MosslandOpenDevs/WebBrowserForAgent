@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import type { Server } from 'http';
 import { BrowserManager } from '../browser.js';
-import { AccessibilityMapper } from '../accessibility.js';
+import {
+  AccessibilityMapper,
+  createAccessibilityMap,
+  type AccessibilityMap,
+} from '../accessibility.js';
 import { startTestServer } from '../../__tests__/helpers.js';
 
 let testServer: Server;
@@ -131,5 +135,90 @@ describe('AccessibilityMapper', () => {
 
     expect(map.totalCount).toBe(0);
     expect(AccessibilityMapper.formatAsText(map)).toContain('0 elements');
+  });
+
+  it('should detect non-standard clickable elements (cursor:pointer / onclick)', async () => {
+    const page = bm.getActivePage();
+    await page.goto(baseUrl + '/clickable.html');
+    const viewport = bm.getViewport();
+    const map = await mapper.generateMap(page, viewport);
+
+    const pointerCard = map.findByText('Open settings');
+    expect(pointerCard).toBeDefined();
+    expect(pointerCard!.role).toBe('clickable');
+    expect(pointerCard!.attributes.clickable).toBe('true');
+
+    const onclickDiv = map.findByText('Run action');
+    expect(onclickDiv).toBeDefined();
+    expect(onclickDiv!.attributes.clickable).toBe('true');
+  });
+
+  it('should keep metadata aligned with coordinates around long-text wrappers (regression)', async () => {
+    // The long-text wrapper + long-text child used to desync the two DOM walks
+    // and misalign metadata with bounding boxes. Verify the standard elements
+    // that follow it still map to their own identity and sane geometry.
+    const page = bm.getActivePage();
+    await page.goto(baseUrl + '/clickable.html');
+    const viewport = bm.getViewport();
+    const map = await mapper.generateMap(page, viewport);
+
+    const tailButton = map.findByText('Tail Button');
+    expect(tailButton).toBeDefined();
+    expect(tailButton!.role).toBe('button');
+    // A real <button> has a small, positive box — not the coordinates of some
+    // other element that a misalignment would have handed it.
+    expect(tailButton!.bounds.width).toBeGreaterThan(0);
+    expect(tailButton!.bounds.height).toBeGreaterThan(0);
+    expect(tailButton!.bounds.height).toBeLessThan(100);
+
+    const deepLink = map.elements.find(
+      (e) => e.role === 'link' && e.attributes.href?.includes('/deep-link'),
+    );
+    expect(deepLink).toBeDefined();
+    expect(deepLink!.bounds.width).toBeGreaterThan(0);
+  });
+
+  it('should format multiple frames as separate sections', () => {
+    const map: AccessibilityMap = createAccessibilityMap([
+      {
+        index: 0,
+        role: 'button',
+        name: 'Main',
+        bounds: { x: 10, y: 10, width: 80, height: 30 },
+        attributes: {},
+        frameId: 'main',
+      },
+      {
+        index: 1,
+        role: 'input[text]',
+        name: 'Card',
+        bounds: { x: 100, y: 200, width: 250, height: 35 },
+        attributes: { placeholder: 'Card number' },
+        frameId: 'iframe#payment',
+      },
+    ]);
+
+    const text = AccessibilityMapper.formatAsText(map);
+    expect(text).toContain('frame: main');
+    expect(text).toContain('frame: iframe#payment');
+    // Two distinct section headers
+    expect(text.match(/\[Accessibility Map/g)?.length).toBe(2);
+    expect(text).toContain('[1] input[text] "Card"');
+    expect(text).toContain('placeholder=Card number');
+  });
+
+  it('should keep totalCount in sync with the elements array', () => {
+    const map = createAccessibilityMap([]);
+    expect(map.totalCount).toBe(0);
+    map.elements.push({
+      index: 0,
+      role: 'button',
+      name: 'X',
+      bounds: { x: 0, y: 0, width: 1, height: 1 },
+      attributes: {},
+      frameId: 'main',
+    });
+    // Getter-backed: reflects the mutation instead of a frozen snapshot.
+    expect(map.totalCount).toBe(1);
   });
 });

@@ -79,7 +79,7 @@ After most actions, you receive an **accessibility map** — a text listing of a
 \`\`\`
 [Accessibility Map - 5 elements, frame: main]
 [0] button "Login" @ (350, 420, 120, 40)
-[1] link "Sign Up" @ (500, 425, 80, 20) - href=/signup
+[1] link "Sign Up" @ (500, 425, 80, 20) - href=https://example.com/signup
 [2] input[text] "" @ (300, 300, 200, 35) - placeholder=Email address
 [3] input[password] "" @ (300, 350, 200, 35) - placeholder=Password
 [4] checkbox "Remember me" @ (300, 390, 20, 20) - unchecked

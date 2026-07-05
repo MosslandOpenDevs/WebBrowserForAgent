@@ -27,6 +27,8 @@ export class ScreenshotEngine {
   private recordingInterval: ReturnType<typeof setInterval> | null = null;
   private recording = false;
   private currentFps = 0;
+  private getPage: (() => Page) | null = null;
+  private lastCaptureFailed = false;
 
   constructor(private accessibilityMapper: AccessibilityMapper) {}
 
@@ -37,13 +39,13 @@ export class ScreenshotEngine {
   ): Promise<ScreenshotResult> {
     let imageBuffer: Buffer;
 
-    if (this.recording) {
-      const latest = this.getLatestFrame();
-      if (latest) {
-        imageBuffer = latest;
-      } else {
-        imageBuffer = await page.screenshot({ type: 'png', fullPage: false });
-      }
+    // While recording, serve the freshest buffered frame — but only if the
+    // last background capture succeeded. If it failed (active page navigated,
+    // was closed, or switched), fall back to a live screenshot of the caller's
+    // current page instead of returning a stale/wrong-tab frame.
+    const latest = this.recording && !this.lastCaptureFailed ? this.getLatestFrame() : null;
+    if (latest) {
+      imageBuffer = latest;
     } else {
       imageBuffer = await page.screenshot({ type: 'png', fullPage: false });
     }
@@ -60,7 +62,13 @@ export class ScreenshotEngine {
     return result;
   }
 
-  async startRecording(page: Page, options: RecordingOptions): Promise<void> {
+  /**
+   * Start periodic capture. Takes a resolver rather than a fixed Page so the
+   * recording always follows the currently active tab (and survives tab
+   * switches / the recorded tab being closed) instead of freezing on the tab
+   * that happened to be active at start time.
+   */
+  async startRecording(getPage: () => Page, options: RecordingOptions): Promise<void> {
     if (this.recording) {
       throw new RecordingAlreadyActiveError();
     }
@@ -76,15 +84,13 @@ export class ScreenshotEngine {
     this.bufferWriteIndex = 0;
     this.frameCount = 0;
     this.currentFps = fps;
+    this.getPage = getPage;
+    this.lastCaptureFailed = false;
     this.recording = true;
 
     const intervalMs = Math.round(1000 / fps);
-    this.recordingInterval = setInterval(async () => {
-      try {
-        await this.captureFrame(page);
-      } catch {
-        // Page may have navigated or closed; skip this frame
-      }
+    this.recordingInterval = setInterval(() => {
+      void this.captureFrame();
     }, intervalMs);
   }
 
@@ -101,6 +107,8 @@ export class ScreenshotEngine {
     this.bufferWriteIndex = 0;
     this.frameCount = 0;
     this.currentFps = 0;
+    this.getPage = null;
+    this.lastCaptureFailed = false;
   }
 
   getRecordingStatus(): { isRecording: boolean; fps?: number; frameCount?: number } {
@@ -118,10 +126,19 @@ export class ScreenshotEngine {
     return this.ringBuffer[idx];
   }
 
-  private async captureFrame(page: Page): Promise<void> {
-    const buffer = await page.screenshot({ type: 'png', fullPage: false });
-    this.ringBuffer[this.bufferWriteIndex % this.bufferSize] = buffer;
-    this.bufferWriteIndex = (this.bufferWriteIndex + 1) % this.bufferSize;
-    this.frameCount++;
+  private async captureFrame(): Promise<void> {
+    if (!this.getPage) return;
+    try {
+      const page = this.getPage();
+      const buffer = await page.screenshot({ type: 'png', fullPage: false });
+      this.ringBuffer[this.bufferWriteIndex % this.bufferSize] = buffer;
+      this.bufferWriteIndex = (this.bufferWriteIndex + 1) % this.bufferSize;
+      this.frameCount++;
+      this.lastCaptureFailed = false;
+    } catch {
+      // Active page may have navigated, closed, or be mid-transition. Mark the
+      // buffer stale so capture() returns a live screenshot instead of an old frame.
+      this.lastCaptureFailed = true;
+    }
   }
 }

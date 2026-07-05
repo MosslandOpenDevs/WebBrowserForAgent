@@ -30,8 +30,15 @@ export function registerNavigationTools(
       device: z
         .string()
         .optional()
-        .describe('Device preset: desktop, iphone-14, pixel-7, ipad-pro-11'),
-      deviceScaleFactor: z.number().min(1).max(2).optional(),
+        .describe(
+          'Device preset with full emulation (userAgent/touch/mobile): desktop, iphone-14, iphone-14-landscape, pixel-7, ipad-pro-11',
+        ),
+      deviceScaleFactor: z
+        .number()
+        .min(1)
+        .max(2)
+        .optional()
+        .describe('Screenshot scale (1x–2x). Device presets are auto-clamped to 2x.'),
     },
     async (params) => {
       try {
@@ -196,14 +203,16 @@ export function registerNavigationTools(
 
   server.tool(
     'browser_resize',
-    'Resize the browser viewport or apply a device preset',
+    "Resize the browser viewport or apply a device preset's dimensions. Note: a device preset here only changes the viewport size — userAgent, touch, mobile emulation, and deviceScaleFactor are fixed at browser_launch. Relaunch with { device } for full mobile emulation.",
     {
       width: z.number().min(320).max(1280).optional(),
       height: z.number().min(480).max(720).optional(),
       device: z
         .string()
         .optional()
-        .describe('Device preset: desktop, iphone-14, pixel-7, ipad-pro-11'),
+        .describe(
+          'Device preset (dimensions only): desktop, iphone-14, iphone-14-landscape, pixel-7, ipad-pro-11',
+        ),
     },
     async (params) => {
       try {

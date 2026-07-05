@@ -37,16 +37,19 @@ Key libraries: `libnss3`, `libatk-bridge2.0-0`, `libdrm2`, `libxkbcommon0`, `lib
 ```dockerfile
 FROM node:20-slim
 
+# Enable pnpm (bundled with Node via Corepack)
+RUN corepack enable
+
 # Install Playwright system dependencies
 RUN npx playwright install-deps chromium
 
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
-RUN npm install
+RUN pnpm install --frozen-lockfile
 RUN npx playwright install chromium
 
 COPY . .
-RUN npm run build
+RUN pnpm build
 
 EXPOSE 3100
 CMD ["node", "dist/mcp/server.js", "--transport", "http"]
@@ -69,7 +72,7 @@ A single Chromium instance uses approximately 200–500MB of memory. Complex pag
 - **File download/upload**: File downloads and `<input type="file">` uploads are not currently supported.
 - **Auth popups**: HTTP Basic Auth and OS-level authentication dialogs are not handled. Only web-based login forms are supported.
 - **WebRTC/Media**: Camera, microphone, and media stream features are not supported.
-- **HTTP transport security**: HTTP mode binds to `127.0.0.1` by default. For external access, configure authentication and TLS separately (reverse proxy recommended).
+- **HTTP transport security**: HTTP mode binds to `127.0.0.1` by default and enforces a Host-header allowlist (DNS-rebinding protection) so a malicious web page can't reach the endpoint even on the loopback bind. The `/mcp` endpoint has **no built-in authentication** — binding to a non-loopback host exposes full control of a browser holding the user's logged-in sessions, so an authenticating reverse proxy with TLS is **required**, not optional. When binding remotely, set `MCP_HTTP_ALLOWED_HOSTS` (and optionally `MCP_HTTP_ALLOWED_ORIGINS`) to the hostnames clients connect with.
 - **Concurrent connections**: Multiple MCP clients connecting via HTTP share a single browser instance, which can cause state conflicts. Use separate server instances per client.
 - **Browser binary not included**: The npm package does not bundle browser binaries. After installation, run `npx playwright install chromium` separately. Firefox/WebKit require their own install commands as well.
 
@@ -109,7 +112,14 @@ npx web-browser-for-agent --transport http
 # MCP HTTP server listening on 127.0.0.1:3100
 ```
 
-Change port: `MCP_HTTP_PORT=8080`, change bind address: `MCP_HTTP_HOST=0.0.0.0`
+Configuration via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_HTTP_PORT` | `3100` | Listen port |
+| `MCP_HTTP_HOST` | `127.0.0.1` | Bind address. A non-loopback bind requires a reverse proxy (see [Limitations](#limitations)) |
+| `MCP_HTTP_ALLOWED_HOSTS` | loopback + bind | Comma-separated Host-header allowlist (DNS-rebinding protection) |
+| `MCP_HTTP_ALLOWED_ORIGINS` | _(any)_ | Comma-separated Origin allowlist |
 
 ## MCP Tools
 
@@ -122,7 +132,7 @@ Change port: `MCP_HTTP_PORT=8080`, change bind address: `MCP_HTTP_HOST=0.0.0.0`
 | `browser_back` | Go back in history |
 | `browser_forward` | Go forward in history |
 | `browser_close` | Close the browser |
-| `browser_resize` | Resize viewport or apply device preset |
+| `browser_resize` | Resize viewport, or apply a device preset's dimensions (viewport only — no UA/touch emulation) |
 
 ### Screenshot & Recording
 
@@ -175,7 +185,7 @@ Enables models without vision capabilities to operate a browser by extracting al
 ```
 [Accessibility Map - 5 elements, frame: main]
 [0] button "Login" @ (350, 420, 120, 40)
-[1] link "Sign Up" @ (500, 425, 80, 20) - href=/signup
+[1] link "Sign Up" @ (500, 425, 80, 20) - href=https://example.com/signup
 [2] input[text] "" @ (300, 300, 200, 35) - placeholder=Email address
 [3] input[password] "" @ (300, 350, 200, 35) - placeholder=Password
 [4] checkbox "Remember me" @ (300, 390, 20, 20) - unchecked
@@ -187,6 +197,7 @@ Enables models without vision capabilities to operate a browser by extracting al
 - Each element gets a unique index — use `browser_click({ target: { elementIndex: 0 } })` to interact
 - Automatically traverses iframes; coordinates are relative to the main frame
 - Detects non-standard clickable elements via `cursor:pointer` and `onclick` attributes
+- Link hrefs are DOM-resolved absolute URLs (e.g. a `/signup` link on `example.com` shows `href=https://example.com/signup`)
 
 ### Detected Elements
 
@@ -196,15 +207,17 @@ Non-standard clickable elements: `cursor: pointer` style, `onclick`/`@click`/`ng
 
 ## Device Presets
 
-| Preset | Viewport | Description |
-|--------|----------|-------------|
-| `desktop` | 1280×720 | Default |
-| `iphone-14` | 390×844→390×720 | iOS mobile |
-| `iphone-14-landscape` | 844×390→844×480 | Landscape mode |
-| `pixel-7` | 412×915→412×720 | Android mobile |
-| `ipad-pro-11` | 834×1194→834×720 | Tablet |
+| Preset | Device viewport | Applied (clamped) | Description |
+|--------|-----------------|-------------------|-------------|
+| `desktop` | 1280×720 | 1280×720 | Default |
+| `iphone-14` | 390×664 | 390×664 | iOS mobile |
+| `iphone-14-landscape` | 750×340 | 750×480 | Landscape mode |
+| `pixel-7` | 412×839 | 412×720 | Android mobile |
+| `ipad-pro-11` | 834×1194 | 834×720 | Tablet |
 
-Viewport is clamped to 320–1280 (width) × 480–720 (height).
+Viewport is clamped to 320–1280 (width) × 480–720 (height), and the device scale factor is clamped to 2× — keeping screenshots within the token-optimized size ceiling. `browser_launch({ device })` applies full mobile emulation (userAgent, touch, `isMobile`); `browser_resize({ device })` applies **only the viewport dimensions**.
+
+> Exact preset viewports track the installed Playwright device registry (verified against Playwright 1.58.x).
 
 ## Programmatic Usage
 
@@ -232,9 +245,9 @@ const viewport = browser.getViewport();
 const result = await screenshot.capture(page, viewport, true);
 console.log(AccessibilityMapper.formatAsText(result.accessibilityMap!));
 
-// Click by element index
+// Click by element index — find helpers are available on the generated map
 const map = await mapper.generateMap(page, viewport);
-const loginBtn = map.elements.find(e => e.name === 'Login');
+const loginBtn = map.findByText('Login');
 if (loginBtn) {
   await input.click(page, { elementIndex: loginBtn.index }, map);
 }

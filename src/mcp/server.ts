@@ -22,11 +22,20 @@ import { registerPrompts } from './prompts.js';
 const require = createRequire(import.meta.url);
 const pkg = require('../../package.json') as { version: string };
 
-// Core singletons
+// Core singletons.
+//
+// NOTE: A single browser is shared per server process. In HTTP mode this means
+// concurrent client sessions share one browser — an intentional, documented
+// limitation (see README "Concurrent connections"). Run one server process per
+// client for isolation.
 const browserManager = new BrowserManager();
 const accessibilityMapper = new AccessibilityMapper();
 const screenshotEngine = new ScreenshotEngine(accessibilityMapper);
 const inputController = new InputController();
+
+// Extra teardown steps registered by the active transport (e.g. closing HTTP
+// sessions and the Express listener). Run during graceful shutdown.
+const shutdownHooks: Array<() => Promise<void>> = [];
 
 function createServer(): McpServer {
   const server = new McpServer({
@@ -38,7 +47,13 @@ function createServer(): McpServer {
   registerTabTools(server, browserManager, screenshotEngine);
   registerScreenshotTools(server, browserManager, screenshotEngine);
   registerAccessibilityTools(server, browserManager, accessibilityMapper);
-  registerMouseTools(server, browserManager, inputController, screenshotEngine, accessibilityMapper);
+  registerMouseTools(
+    server,
+    browserManager,
+    inputController,
+    screenshotEngine,
+    accessibilityMapper,
+  );
   registerKeyboardTools(server, browserManager, inputController, screenshotEngine);
   registerPrompts(server);
 
@@ -55,20 +70,78 @@ async function cleanup() {
   if (browserManager.isLaunched()) {
     await browserManager.close();
   }
+  for (const hook of shutdownHooks) {
+    try {
+      await hook();
+    } catch {
+      // Best-effort teardown; keep going so remaining hooks still run.
+    }
+  }
 }
 
 async function main() {
   if (transportArg === 'http') {
     const { default: express } = await import('express');
-    const { StreamableHTTPServerTransport } = await import(
-      '@modelcontextprotocol/sdk/server/streamableHttp.js'
-    );
+    const { StreamableHTTPServerTransport } =
+      await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
     const { isInitializeRequest } = await import('@modelcontextprotocol/sdk/types.js');
 
     const port = parseInt(process.env.MCP_HTTP_PORT ?? '3100', 10);
     const host = process.env.MCP_HTTP_HOST ?? '127.0.0.1';
     const app = express();
     app.use(express.json());
+
+    // DNS-rebinding protection. Without a Host allowlist, a web page the user
+    // opens in an ordinary browser could rebind a hostname to 127.0.0.1 and
+    // POST to this endpoint, driving the agent's real (logged-in) browser.
+    // Default allowlist covers the loopback bind; extend via env vars for
+    // remote/reverse-proxy deployments.
+    const defaultAllowedHosts = [
+      `${host}:${port}`,
+      `127.0.0.1:${port}`,
+      `localhost:${port}`,
+      `[::1]:${port}`,
+    ];
+    const allowedHosts = new Set(
+      (process.env.MCP_HTTP_ALLOWED_HOSTS
+        ? process.env.MCP_HTTP_ALLOWED_HOSTS.split(',')
+        : defaultAllowedHosts
+      )
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const allowedOrigins = process.env.MCP_HTTP_ALLOWED_ORIGINS
+      ? new Set(
+          process.env.MCP_HTTP_ALLOWED_ORIGINS.split(',')
+            .map((o) => o.trim())
+            .filter(Boolean),
+        )
+      : null;
+
+    app.use('/mcp', (req, res, next) => {
+      const hostHeader = (req.headers.host ?? '').toLowerCase();
+      if (!allowedHosts.has(hostHeader)) {
+        res.status(403).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: `Forbidden: Host "${hostHeader}" is not allowed. Set MCP_HTTP_ALLOWED_HOSTS to permit it.`,
+          },
+          id: null,
+        });
+        return;
+      }
+      const origin = req.headers.origin;
+      if (origin && allowedOrigins && !allowedOrigins.has(origin)) {
+        res.status(403).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: `Forbidden: Origin "${origin}" is not allowed.` },
+          id: null,
+        });
+        return;
+      }
+      next();
+    });
 
     // Session management: map session IDs to transports
     const sessions = new Map<string, InstanceType<typeof StreamableHTTPServerTransport>>();
@@ -174,13 +247,30 @@ async function main() {
       }
     });
 
-    app.listen(port, host, () => {
+    const isLoopback = ['127.0.0.1', 'localhost', '::1'].includes(host);
+    const httpServer = app.listen(port, host, () => {
       console.error(`MCP HTTP server listening on ${host}:${port}`);
-      if (host === '0.0.0.0') {
+      if (!isLoopback) {
         console.error(
-          'WARNING: Server is bound to all interfaces. This is not recommended for production.',
+          `WARNING: Bound to non-loopback host "${host}". The /mcp endpoint is unauthenticated — ` +
+            "anyone who can reach this port gains full control of a browser holding the user's " +
+            'logged-in sessions. Put it behind an authenticating reverse proxy with TLS, and set ' +
+            'MCP_HTTP_ALLOWED_HOSTS to the hostnames clients connect with.',
         );
       }
+    });
+
+    // Graceful shutdown: close every open session transport, then the listener.
+    shutdownHooks.push(async () => {
+      for (const transport of sessions.values()) {
+        try {
+          await transport.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      sessions.clear();
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
     });
   } else {
     // Default: stdio transport
@@ -190,10 +280,14 @@ async function main() {
   }
 }
 
-// Graceful shutdown
+// Graceful shutdown. Guard against re-entry (a second Ctrl-C / SIGTERM) and
+// bound the wait so a hung browser close can't block process exit forever.
+let shuttingDown = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, async () => {
-    await cleanup();
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await Promise.race([cleanup(), new Promise((resolve) => setTimeout(resolve, 5000))]);
     process.exit(0);
   });
 }

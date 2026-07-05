@@ -35,16 +35,19 @@ npx playwright install-deps chromium
 ```dockerfile
 FROM node:20-slim
 
+# pnpm 활성화 (Node에 Corepack으로 번들됨)
+RUN corepack enable
+
 # Playwright 시스템 의존성 설치
 RUN npx playwright install-deps chromium
 
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
-RUN npm install
+RUN pnpm install --frozen-lockfile
 RUN npx playwright install chromium
 
 COPY . .
-RUN npm run build
+RUN pnpm build
 
 EXPOSE 3100
 CMD ["node", "dist/mcp/server.js", "--transport", "http"]
@@ -67,7 +70,7 @@ Chromium 인스턴스 하나당 약 200–500MB 메모리를 사용한다. 복�
 - **파일 다운로드/업로드**: 현재 파일 다운로드 및 `<input type="file">` 업로드는 지원하지 않는다.
 - **인증 팝업**: HTTP Basic Auth, OS 레벨 인증 다이얼로그는 처리하지 않는다. 웹 기반 로그인 폼만 지원.
 - **WebRTC/미디어**: 카메라, 마이크, 화상통화 등 미디어 스트림 관련 기능은 지원하지 않는다.
-- **HTTP transport 보안**: HTTP 모드는 기본적으로 `127.0.0.1`에만 바인딩된다. 외부 노출 시 별도 인증/TLS를 구성해야 한다 (리버스 프록시 권장).
+- **HTTP transport 보안**: HTTP 모드는 기본적으로 `127.0.0.1`에만 바인딩되며, Host 헤더 허용목록(DNS 리바인딩 방어)을 적용하여 loopback 바인딩에서도 악성 웹페이지가 엔드포인트에 접근하지 못하게 한다. `/mcp` 엔드포인트에는 **내장 인증이 없다** — 비-loopback 호스트에 바인딩하면 사용자의 로그인 세션을 가진 브라우저의 전체 제어권이 노출되므로, 인증을 수행하는 리버스 프록시 + TLS 구성이 **선택이 아니라 필수**다. 원격 바인딩 시 `MCP_HTTP_ALLOWED_HOSTS`(선택적으로 `MCP_HTTP_ALLOWED_ORIGINS`)에 클라이언트가 접속하는 호스트명을 설정할 것.
 - **동시 접속**: HTTP transport에서 여러 MCP 클라이언트가 동시에 연결되면 하나의 브라우저 인스턴스를 공유하게 되므로, 상태 충돌이 발생할 수 있다. 클라이언트당 별도 서버 인스턴스를 사용할 것.
 - **Playwright 브라우저 설치 필요**: npm 패키지에는 브라우저 바이너리가 포함되지 않는다. 설치 후 `npx playwright install chromium`을 별도 실행해야 한다. Firefox/WebKit 사용 시에도 각각 설치 필요.
 
@@ -107,7 +110,14 @@ npx web-browser-for-agent --transport http
 # MCP HTTP server listening on 127.0.0.1:3100
 ```
 
-포트 변경: `MCP_HTTP_PORT=8080`, 바인드 주소 변경: `MCP_HTTP_HOST=0.0.0.0`
+환경변수로 설정:
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `MCP_HTTP_PORT` | `3100` | 리슨 포트 |
+| `MCP_HTTP_HOST` | `127.0.0.1` | 바인드 주소. 비-loopback 바인딩은 리버스 프록시 필요 ([제약사항](#제약사항) 참고) |
+| `MCP_HTTP_ALLOWED_HOSTS` | loopback + 바인드 | Host 헤더 허용목록(DNS 리바인딩 방어), 쉼표 구분 |
+| `MCP_HTTP_ALLOWED_ORIGINS` | _(제한 없음)_ | Origin 허용목록, 쉼표 구분 |
 
 ## MCP Tools
 
@@ -120,7 +130,7 @@ npx web-browser-for-agent --transport http
 | `browser_back` | 뒤로 가기 |
 | `browser_forward` | 앞으로 가기 |
 | `browser_close` | 브라우저 종료 |
-| `browser_resize` | 뷰포트 크기 변경 또는 디바이스 프리셋 적용 |
+| `browser_resize` | 뷰포트 크기 변경, 또는 디바이스 프리셋의 크기만 적용 (UA/터치 에뮬레이션 없음) |
 
 ### Screenshot & Recording
 
@@ -173,7 +183,7 @@ npx web-browser-for-agent --transport http
 ```
 [Accessibility Map - 5 elements, frame: main]
 [0] button "Login" @ (350, 420, 120, 40)
-[1] link "Sign Up" @ (500, 425, 80, 20) - href=/signup
+[1] link "Sign Up" @ (500, 425, 80, 20) - href=https://example.com/signup
 [2] input[text] "" @ (300, 300, 200, 35) - placeholder=Email address
 [3] input[password] "" @ (300, 350, 200, 35) - placeholder=Password
 [4] checkbox "Remember me" @ (300, 390, 20, 20) - unchecked
@@ -185,6 +195,7 @@ npx web-browser-for-agent --transport http
 - 각 요소에 고유 인덱스 부여 → `browser_click({ target: { elementIndex: 0 } })`으로 조작
 - iframe 내부 요소도 자동 탐색, 메인 프레임 기준 좌표로 변환
 - `cursor:pointer`, `onclick` 등 비표준 클릭 가능 요소도 감지
+- 링크 href는 DOM에서 절대 URL로 변환됨 (예: `example.com`의 `/signup` 링크는 `href=https://example.com/signup`)
 
 ### 추출 대상
 
@@ -194,15 +205,17 @@ npx web-browser-for-agent --transport http
 
 ## Device Presets
 
-| Preset | Viewport | Description |
-|--------|----------|-------------|
-| `desktop` | 1280×720 | 기본값 |
-| `iphone-14` | 390×844→390×720 | iOS 모바일 |
-| `iphone-14-landscape` | 844×390→844×480 | 가로 모드 |
-| `pixel-7` | 412×915→412×720 | Android 모바일 |
-| `ipad-pro-11` | 834×1194→834×720 | 태블릿 |
+| Preset | 디바이스 뷰포트 | 적용값 (클램핑) | Description |
+|--------|-----------------|------------------|-------------|
+| `desktop` | 1280×720 | 1280×720 | 기본값 |
+| `iphone-14` | 390×664 | 390×664 | iOS 모바일 |
+| `iphone-14-landscape` | 750×340 | 750×480 | 가로 모드 |
+| `pixel-7` | 412×839 | 412×720 | Android 모바일 |
+| `ipad-pro-11` | 834×1194 | 834×720 | 태블릿 |
 
-뷰포트는 320–1280(너비) × 480–720(높이) 범위로 클램핑된다.
+뷰포트는 320–1280(너비) × 480–720(높이) 범위로, 디바이스 스케일 팩터는 2×로 클램핑된다 (스크린샷 크기를 토큰 최적화 상한 내로 유지). `browser_launch({ device })`는 전체 모바일 에뮬레이션(userAgent, 터치, `isMobile`)을 적용하고, `browser_resize({ device })`는 **뷰포트 크기만** 적용한다.
+
+> 프리셋 뷰포트 값은 설치된 Playwright 디바이스 레지스트리를 따른다 (Playwright 1.58.x 기준 확인).
 
 ## Programmatic Usage
 
@@ -230,9 +243,9 @@ const viewport = browser.getViewport();
 const result = await screenshot.capture(page, viewport, true);
 console.log(AccessibilityMapper.formatAsText(result.accessibilityMap!));
 
-// Click by element index
+// Click by element index — 생성된 맵에서 find 헬퍼 사용 가능
 const map = await mapper.generateMap(page, viewport);
-const loginBtn = map.elements.find(e => e.name === 'Login');
+const loginBtn = map.findByText('Login');
 if (loginBtn) {
   await input.click(page, { elementIndex: loginBtn.index }, map);
 }

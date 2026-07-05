@@ -1,4 +1,4 @@
-import type { Page, Frame, ElementHandle } from 'playwright';
+import type { Page, Frame } from 'playwright';
 
 export interface AccessibilityElement {
   index: number;
@@ -14,11 +14,22 @@ export interface AccessibilityElement {
   frameId: string;
 }
 
+/**
+ * Pure-data view of the interactive elements on a page.
+ *
+ * This is intentionally a plain data shape so it can be constructed by hand
+ * (e.g. in tests or by library consumers) and serialized without losing
+ * information. `generateMap()` / `createAccessibilityMap()` return the richer
+ * {@link QueryableAccessibilityMap}, which adds convenience lookup helpers.
+ */
 export interface AccessibilityMap {
   elements: AccessibilityElement[];
   totalCount: number;
   timestamp: number;
+}
 
+/** {@link AccessibilityMap} plus convenience lookup helpers. */
+export interface QueryableAccessibilityMap extends AccessibilityMap {
   /** Find the first element whose name contains the given text (case-insensitive). */
   findByText(text: string): AccessibilityElement | undefined;
 
@@ -47,7 +58,6 @@ interface RawElementData {
   value: string;
   options: string[];
   contentEditable: boolean;
-  isHidden: boolean;
   isCursorPointer: boolean;
 }
 
@@ -67,12 +77,24 @@ const INTERACTIVE_SELECTORS = [
   '[contenteditable="true"]',
 ].join(', ');
 
-export function createAccessibilityMap(elements: AccessibilityElement[]): AccessibilityMap {
+// Temporary attributes used to bind a DOM element to its extracted metadata by
+// index. Each extraction pass tags the elements it keeps, then fetches handles
+// via the attribute so metadata and coordinates are keyed to the SAME node
+// (never paired by array position, which desyncs if the DOM mutates).
+const MARKER_STANDARD = 'data-a11y-el';
+const MARKER_CLICKABLE = 'data-a11y-clickable';
+
+export function createAccessibilityMap(
+  elements: AccessibilityElement[],
+): QueryableAccessibilityMap {
   const lowerName = (el: AccessibilityElement) => el.name.toLowerCase();
 
   return {
     elements,
-    totalCount: elements.length,
+    // Getter so totalCount can never desync from the elements array.
+    get totalCount() {
+      return elements.length;
+    },
     timestamp: Date.now(),
 
     findByText(text: string): AccessibilityElement | undefined {
@@ -103,7 +125,7 @@ export class AccessibilityMapper {
   async generateMap(
     page: Page,
     viewport: { width: number; height: number },
-  ): Promise<AccessibilityMap> {
+  ): Promise<QueryableAccessibilityMap> {
     const elements: AccessibilityElement[] = [];
     const frames = page.frames();
 
@@ -155,57 +177,55 @@ export class AccessibilityMapper {
     viewport: { width: number; height: number },
     frameId: string,
   ): Promise<AccessibilityElement[]> {
-    const elements: AccessibilityElement[] = [];
-
-    let handles: ElementHandle<Node>[];
+    let metadata: RawElementData[];
     try {
-      handles = await frame.$$(selector);
+      // Single round-trip: tag every visible matching element with an index
+      // marker and collect its metadata keyed to that same index.
+      metadata = (await frame.evaluate(
+        ({ sel, marker }) => {
+          const results: unknown[] = [];
+          const els = document.querySelectorAll(sel);
+          let idx = 0;
+          els.forEach((el) => {
+            const htmlEl = el as HTMLElement;
+            const style = window.getComputedStyle(htmlEl);
+            const isHidden =
+              style.display === 'none' ||
+              style.visibility === 'hidden' ||
+              style.opacity === '0' ||
+              htmlEl.offsetWidth === 0 ||
+              htmlEl.offsetHeight === 0;
+            if (isHidden) return;
+
+            const inputEl = el as HTMLInputElement;
+            const selectEl = el as HTMLSelectElement;
+            el.setAttribute(marker, String(idx));
+            idx++;
+            results.push({
+              tagName: htmlEl.tagName.toLowerCase(),
+              type: inputEl.type || '',
+              role: htmlEl.getAttribute('role') || '',
+              innerText: (htmlEl.innerText || '').trim().substring(0, 100),
+              ariaLabel: htmlEl.getAttribute('aria-label') || '',
+              placeholder: inputEl.placeholder || '',
+              href: (el as HTMLAnchorElement).href || '',
+              checked: 'checked' in inputEl ? inputEl.checked : null,
+              value: inputEl.value || '',
+              options:
+                htmlEl.tagName === 'SELECT' ? Array.from(selectEl.options).map((o) => o.text) : [],
+              contentEditable: htmlEl.contentEditable === 'true',
+              isCursorPointer: false,
+            });
+          });
+          return results;
+        },
+        { sel: selector, marker: MARKER_STANDARD },
+      )) as RawElementData[];
     } catch {
-      return elements;
+      return [];
     }
 
-    const rawDataList = await frame.evaluate((sel: string) => {
-      const els = document.querySelectorAll(sel);
-      return Array.from(els).map((el) => {
-        const htmlEl = el as HTMLElement;
-        const inputEl = el as HTMLInputElement;
-        const selectEl = el as HTMLSelectElement;
-        const style = window.getComputedStyle(htmlEl);
-        const isHidden =
-          style.display === 'none' ||
-          style.visibility === 'hidden' ||
-          style.opacity === '0' ||
-          htmlEl.offsetWidth === 0 ||
-          htmlEl.offsetHeight === 0;
-
-        return {
-          tagName: htmlEl.tagName.toLowerCase(),
-          type: inputEl.type || '',
-          role: htmlEl.getAttribute('role') || '',
-          innerText: (htmlEl.innerText || '').trim().substring(0, 100),
-          ariaLabel: htmlEl.getAttribute('aria-label') || '',
-          placeholder: inputEl.placeholder || '',
-          href: (el as HTMLAnchorElement).href || '',
-          checked: 'checked' in inputEl ? inputEl.checked : null,
-          value: inputEl.value || '',
-          options:
-            htmlEl.tagName === 'SELECT' ? Array.from(selectEl.options).map((o) => o.text) : [],
-          contentEditable: htmlEl.contentEditable === 'true',
-          isHidden,
-          isCursorPointer: false,
-        };
-      });
-    }, selector);
-
-    for (let i = 0; i < handles.length; i++) {
-      const raw = rawDataList[i] as RawElementData;
-      if (raw.isHidden) continue;
-
-      const el = await this.rawToElement(handles[i], raw, viewport, frameId);
-      if (el) elements.push(el);
-    }
-
-    return elements;
+    return this.resolveMarked(frame, MARKER_STANDARD, metadata, viewport, frameId);
   }
 
   private async extractClickableElements(
@@ -213,218 +233,155 @@ export class AccessibilityMapper {
     viewport: { width: number; height: number },
     frameId: string,
   ): Promise<AccessibilityElement[]> {
-    const elements: AccessibilityElement[] = [];
-
-    // Find elements with cursor:pointer that are NOT standard interactive elements
-    // and have meaningful text content (to avoid catching every styled container)
-    let clickableData: RawElementData[];
+    let metadata: RawElementData[];
     try {
-      clickableData = await frame.evaluate((interactiveSelector: string) => {
-        const interactiveEls = new Set<Element>(
-          Array.from(document.querySelectorAll(interactiveSelector)),
-        );
-        const results: Array<{
-          tagName: string;
-          type: string;
-          role: string;
-          innerText: string;
-          ariaLabel: string;
-          placeholder: string;
-          href: string;
-          checked: boolean | null;
-          value: string;
-          options: string[];
-          contentEditable: boolean;
-          isHidden: boolean;
-          isCursorPointer: boolean;
-        }> = [];
+      // Single DOM walk that both tags elements and collects their metadata,
+      // so the two can never diverge (previously two separate walks could
+      // select different sets and misalign metadata with coordinates).
+      metadata = (await frame.evaluate(
+        ({ interactiveSelector, marker }) => {
+          if (!document.body) return [];
+          const interactiveEls = new Set<Element>(
+            Array.from(document.querySelectorAll(interactiveSelector)),
+          );
+          const results: unknown[] = [];
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+          let node: Node | null = walker.nextNode();
+          let idx = 0;
 
-        // Walk all elements and check for cursor:pointer
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-        let node: Node | null = walker.nextNode();
-        const seen = new Set<Element>();
-
-        while (node) {
-          const el = node as HTMLElement;
-          // Skip if already in interactive set or already processed
-          if (interactiveEls.has(el) || seen.has(el)) {
-            node = walker.nextNode();
-            continue;
-          }
-
-          const style = window.getComputedStyle(el);
-          const hasPointer = style.cursor === 'pointer';
-          const hasOnClick =
-            el.hasAttribute('onclick') || el.hasAttribute('ng-click') || el.hasAttribute('@click');
-
-          if (!hasPointer && !hasOnClick) {
-            node = walker.nextNode();
-            continue;
-          }
-
-          // Must have direct text or aria-label, and not be a huge container
-          const directText = (el.innerText || '').trim().substring(0, 100);
-          const ariaLabel = el.getAttribute('aria-label') || '';
-          if (!directText && !ariaLabel) {
-            node = walker.nextNode();
-            continue;
-          }
-
-          // Skip if a child of this element is already interactive (avoid duplicating parent)
-          const hasInteractiveChild = el.querySelector(interactiveSelector);
-
-          // Only include leaf-like clickable elements or elements whose text differs from their interactive children
-          if (hasInteractiveChild) {
-            const childText = (hasInteractiveChild as HTMLElement).innerText?.trim() || '';
-            if (childText === directText) {
+          while (node) {
+            const el = node as HTMLElement;
+            if (interactiveEls.has(el)) {
               node = walker.nextNode();
               continue;
             }
+
+            const style = window.getComputedStyle(el);
+            const hasPointer = style.cursor === 'pointer';
+            const hasOnClick =
+              el.hasAttribute('onclick') ||
+              el.hasAttribute('ng-click') ||
+              el.hasAttribute('@click');
+
+            if (!hasPointer && !hasOnClick) {
+              node = walker.nextNode();
+              continue;
+            }
+
+            // Must have direct text or aria-label, and not be a huge container
+            const directText = (el.innerText || '').trim().substring(0, 100);
+            const ariaLabel = el.getAttribute('aria-label') || '';
+            if (!directText && !ariaLabel) {
+              node = walker.nextNode();
+              continue;
+            }
+
+            // Skip a wrapper whose text is identical to its interactive child's
+            // (avoid duplicating what pass 1 already captured). Use the SAME
+            // truncation on both sides so the comparison is consistent.
+            const interactiveChild = el.querySelector(interactiveSelector);
+            if (interactiveChild) {
+              const childText = ((interactiveChild as HTMLElement).innerText || '')
+                .trim()
+                .substring(0, 100);
+              if (childText === directText) {
+                node = walker.nextNode();
+                continue;
+              }
+            }
+
+            const isHidden =
+              style.display === 'none' ||
+              style.visibility === 'hidden' ||
+              style.opacity === '0' ||
+              el.offsetWidth === 0 ||
+              el.offsetHeight === 0;
+
+            if (!isHidden) {
+              el.setAttribute(marker, String(idx));
+              idx++;
+              results.push({
+                tagName: el.tagName.toLowerCase(),
+                type: '',
+                role: el.getAttribute('role') || '',
+                innerText: directText,
+                ariaLabel,
+                placeholder: '',
+                href: '',
+                checked: null,
+                value: '',
+                options: [],
+                contentEditable: false,
+                isCursorPointer: true,
+              });
+            }
+
+            node = walker.nextNode();
           }
 
-          const isHidden =
-            style.display === 'none' ||
-            style.visibility === 'hidden' ||
-            style.opacity === '0' ||
-            el.offsetWidth === 0 ||
-            el.offsetHeight === 0;
-
-          if (!isHidden) {
-            seen.add(el);
-            results.push({
-              tagName: el.tagName.toLowerCase(),
-              type: '',
-              role: el.getAttribute('role') || '',
-              innerText: directText,
-              ariaLabel,
-              placeholder: '',
-              href: '',
-              checked: null,
-              value: '',
-              options: [],
-              contentEditable: false,
-              isHidden: false,
-              isCursorPointer: true,
-            });
-          }
-
-          node = walker.nextNode();
-        }
-
-        return results;
-      }, INTERACTIVE_SELECTORS);
+          return results;
+        },
+        { interactiveSelector: INTERACTIVE_SELECTORS, marker: MARKER_CLICKABLE },
+      )) as RawElementData[];
     } catch {
-      return elements;
+      return [];
     }
 
-    // Now get handles for these elements to compute bounding boxes
-    // We use a different approach: evaluate returns data, then we re-query by matching
-    // Actually, we need handles. Let's use a marker approach.
+    return this.resolveMarked(frame, MARKER_CLICKABLE, metadata, viewport, frameId);
+  }
+
+  /**
+   * Fetch handles for elements tagged with `marker`, compute their bounding
+   * boxes concurrently, pair each handle with its own metadata (by the marker's
+   * index value, never by array position), then strip the markers.
+   */
+  private async resolveMarked(
+    frame: Frame,
+    marker: string,
+    metadata: RawElementData[],
+    viewport: { width: number; height: number },
+    frameId: string,
+  ): Promise<AccessibilityElement[]> {
+    const elements: AccessibilityElement[] = [];
     try {
-      // Mark clickable elements with a temporary data attribute
-      await frame.evaluate((interactiveSelector: string) => {
-        const interactiveEls = new Set<Element>(
-          Array.from(document.querySelectorAll(interactiveSelector)),
-        );
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-        let node: Node | null = walker.nextNode();
-        let idx = 0;
-        const seen = new Set<Element>();
+      const handles = await frame.$$(`[${marker}]`);
+      // Concurrent bounding-box resolution: one batched wait instead of N
+      // serial CDP round-trips. boundingBox() returns main-frame-relative
+      // coordinates (required for iframe elements), so keep using it.
+      const [boxes, indices] = await Promise.all([
+        Promise.all(handles.map((h) => h.boundingBox().catch(() => null))),
+        Promise.all(handles.map((h) => h.getAttribute(marker))),
+      ]);
 
-        while (node) {
-          const el = node as HTMLElement;
-          if (interactiveEls.has(el) || seen.has(el)) {
-            node = walker.nextNode();
-            continue;
-          }
-
-          const style = window.getComputedStyle(el);
-          const hasPointer = style.cursor === 'pointer';
-          const hasOnClick =
-            el.hasAttribute('onclick') || el.hasAttribute('ng-click') || el.hasAttribute('@click');
-
-          if (!hasPointer && !hasOnClick) {
-            node = walker.nextNode();
-            continue;
-          }
-
-          const directText = (el.innerText || '').trim();
-          const ariaLabel = el.getAttribute('aria-label') || '';
-          if (!directText && !ariaLabel) {
-            node = walker.nextNode();
-            continue;
-          }
-
-          const hasInteractiveChild = el.querySelector(interactiveSelector);
-          if (hasInteractiveChild) {
-            const childText = (hasInteractiveChild as HTMLElement).innerText?.trim() || '';
-            if (childText === directText) {
-              node = walker.nextNode();
-              continue;
-            }
-          }
-
-          const isHidden =
-            style.display === 'none' ||
-            style.visibility === 'hidden' ||
-            style.opacity === '0' ||
-            el.offsetWidth === 0 ||
-            el.offsetHeight === 0;
-
-          if (!isHidden) {
-            seen.add(el);
-            el.setAttribute('data-a11y-clickable', String(idx));
-            idx++;
-          }
-
-          node = walker.nextNode();
-        }
-      }, INTERACTIVE_SELECTORS);
-
-      const handles = await frame.$$('[data-a11y-clickable]');
-
-      for (let i = 0; i < handles.length && i < clickableData.length; i++) {
-        const raw = clickableData[i];
-        const el = await this.rawToElement(handles[i], raw, viewport, frameId);
+      for (let i = 0; i < handles.length; i++) {
+        const box = boxes[i];
+        const rawIndex = indices[i] === null ? -1 : Number(indices[i]);
+        const raw = metadata[rawIndex];
+        if (!box || !raw) continue;
+        const el = this.buildElement(raw, box, viewport, frameId);
         if (el) elements.push(el);
       }
-
-      // Clean up markers
-      await frame.evaluate(() => {
-        document.querySelectorAll('[data-a11y-clickable]').forEach((el) => {
-          el.removeAttribute('data-a11y-clickable');
-        });
-      });
     } catch {
-      // Cleanup on error
+      // Frame may have been detached during extraction
+    } finally {
       try {
-        await frame.evaluate(() => {
-          document.querySelectorAll('[data-a11y-clickable]').forEach((el) => {
-            el.removeAttribute('data-a11y-clickable');
-          });
-        });
+        await frame.evaluate((m) => {
+          document.querySelectorAll(`[${m}]`).forEach((el) => el.removeAttribute(m));
+        }, marker);
       } catch {
-        /* ignore */
+        /* ignore cleanup failure */
       }
     }
-
     return elements;
   }
 
-  private async rawToElement(
-    handle: ElementHandle<Node>,
+  private buildElement(
     raw: RawElementData,
+    box: { x: number; y: number; width: number; height: number },
     viewport: { width: number; height: number },
     frameId: string,
-  ): Promise<AccessibilityElement | null> {
-    let box;
-    try {
-      box = await handle.boundingBox();
-    } catch {
-      return null;
-    }
-    if (!box) return null;
-
+  ): AccessibilityElement | null {
+    // Exclude elements fully outside the viewport
     if (
       box.x + box.width < 0 ||
       box.y + box.height < 0 ||

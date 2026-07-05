@@ -62,7 +62,7 @@ describe('ScreenshotEngine', () => {
     const page = bm.getActivePage();
     await page.goto(baseUrl + '/simple.html');
 
-    await screenshotEngine.startRecording(page, { fps: 2 });
+    await screenshotEngine.startRecording(() => page, { fps: 2 });
     const status = screenshotEngine.getRecordingStatus();
     expect(status.isRecording).toBe(true);
     expect(status.fps).toBe(2);
@@ -79,8 +79,8 @@ describe('ScreenshotEngine', () => {
     const page = bm.getActivePage();
     await page.goto(baseUrl + '/simple.html');
 
-    await screenshotEngine.startRecording(page, { fps: 1 });
-    await expect(screenshotEngine.startRecording(page, { fps: 1 })).rejects.toThrow(
+    await screenshotEngine.startRecording(() => page, { fps: 1 });
+    await expect(screenshotEngine.startRecording(() => page, { fps: 1 })).rejects.toThrow(
       RecordingAlreadyActiveError,
     );
   });
@@ -89,7 +89,7 @@ describe('ScreenshotEngine', () => {
     const page = bm.getActivePage();
     await page.goto(baseUrl + '/simple.html');
 
-    await screenshotEngine.startRecording(page, { fps: 10 }); // should clamp to 5
+    await screenshotEngine.startRecording(() => page, { fps: 10 }); // should clamp to 5
     const status = screenshotEngine.getRecordingStatus();
     expect(status.fps).toBe(5);
   });
@@ -98,13 +98,29 @@ describe('ScreenshotEngine', () => {
     const page = bm.getActivePage();
     await page.goto(baseUrl + '/simple.html');
 
-    await screenshotEngine.startRecording(page, { fps: 2 });
+    await screenshotEngine.startRecording(() => page, { fps: 2 });
     await new Promise((r) => setTimeout(r, 1000));
 
     const viewport = bm.getViewport();
     const result = await screenshotEngine.capture(page, viewport, true);
     expect(result.image).toBeTruthy();
     expect(result.accessibilityMap).toBeDefined();
+  });
+
+  it('should wrap the ring buffer and keep serving a valid latest frame', async () => {
+    const page = bm.getActivePage();
+    await page.goto(baseUrl + '/simple.html');
+
+    // 5 FPS with a 5-frame buffer: ~1.5s produces ~7 frames, forcing wraparound.
+    await screenshotEngine.startRecording(() => page, { fps: 5, bufferSize: 5 });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const status = screenshotEngine.getRecordingStatus();
+    expect(status.frameCount!).toBeGreaterThan(5);
+
+    const latest = screenshotEngine.getLatestFrame();
+    expect(latest).not.toBeNull();
+    expect(latest![0]).toBe(0x89); // still a valid PNG after wraparound
   });
 
   it('should handle stopRecording when not recording', async () => {

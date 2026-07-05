@@ -23,6 +23,14 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+/**
+ * Whether resolving a target requires the accessibility map. Coordinate targets
+ * ({x, y}) don't, so we skip the expensive pre-action map generation for them.
+ */
+function needsMap(target?: unknown): boolean {
+  return typeof target === 'object' && target !== null && 'elementIndex' in target;
+}
+
 async function captureResult(browserManager: BrowserManager, screenshotEngine: ScreenshotEngine) {
   const page = browserManager.getActivePage();
   const viewport = browserManager.getViewport();
@@ -57,7 +65,9 @@ export function registerMouseTools(
       try {
         const page = browserManager.getActivePage();
         const viewport = browserManager.getViewport();
-        const map = await accessibilityMapper.generateMap(page, viewport);
+        const map = needsMap(params.target)
+          ? await accessibilityMapper.generateMap(page, viewport)
+          : undefined;
         await inputController.click(page, params.target, map);
         // Brief wait for any state change
         await page.waitForTimeout(100);
@@ -79,7 +89,9 @@ export function registerMouseTools(
       try {
         const page = browserManager.getActivePage();
         const viewport = browserManager.getViewport();
-        const map = await accessibilityMapper.generateMap(page, viewport);
+        const map = needsMap(params.target)
+          ? await accessibilityMapper.generateMap(page, viewport)
+          : undefined;
         await inputController.doubleClick(page, params.target, map);
         await page.waitForTimeout(100);
         return await captureResult(browserManager, screenshotEngine);
@@ -100,7 +112,9 @@ export function registerMouseTools(
       try {
         const page = browserManager.getActivePage();
         const viewport = browserManager.getViewport();
-        const map = await accessibilityMapper.generateMap(page, viewport);
+        const map = needsMap(params.target)
+          ? await accessibilityMapper.generateMap(page, viewport)
+          : undefined;
         await inputController.rightClick(page, params.target, map);
         await page.waitForTimeout(100);
         return await captureResult(browserManager, screenshotEngine);
@@ -124,7 +138,10 @@ export function registerMouseTools(
       try {
         const page = browserManager.getActivePage();
         const viewport = browserManager.getViewport();
-        const map = await accessibilityMapper.generateMap(page, viewport);
+        const map =
+          needsMap(params.from) || needsMap(params.to)
+            ? await accessibilityMapper.generateMap(page, viewport)
+            : undefined;
         await inputController.drag(page, { from: params.from, to: params.to }, map);
         await page.waitForTimeout(100);
         return await captureResult(browserManager, screenshotEngine);
@@ -145,7 +162,9 @@ export function registerMouseTools(
       try {
         const page = browserManager.getActivePage();
         const viewport = browserManager.getViewport();
-        const map = await accessibilityMapper.generateMap(page, viewport);
+        const map = needsMap(params.target)
+          ? await accessibilityMapper.generateMap(page, viewport)
+          : undefined;
         await inputController.mouseMove(page, params.target, map);
         return await captureResult(browserManager, screenshotEngine);
       } catch (error) {
@@ -171,7 +190,9 @@ export function registerMouseTools(
       try {
         const page = browserManager.getActivePage();
         const viewport = browserManager.getViewport();
-        const map = await accessibilityMapper.generateMap(page, viewport);
+        const map = needsMap(params.target)
+          ? await accessibilityMapper.generateMap(page, viewport)
+          : undefined;
         await inputController.scroll(
           page,
           { target: params.target, deltaX: params.deltaX, deltaY: params.deltaY },

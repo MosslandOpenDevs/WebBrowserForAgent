@@ -1,5 +1,9 @@
 # WebBrowserForAgent
 
+<!-- opendevs-badges:start -->
+[![License: MIT](https://img.shields.io/badge/License-MIT-64748b?style=flat)](LICENSE)
+<!-- opendevs-badges:end -->
+
 AI agent가 실제 브라우저를 직접 제어할 수 있는 MCP(Model Context Protocol) 서버.
 
 Playwright 기반으로 Chromium, Firefox, WebKit을 지원하며, 스크린샷 캡처, 마우스/키보드 입력, 멀티 탭 관리, 그리고 **Accessibility Map**(텍스트 기반 페이지 구조 맵)을 통해 멀티모달 여부와 관계없이 모든 AI 모델이 웹 브라우저를 조작할 수 있다.

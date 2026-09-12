@@ -1,5 +1,9 @@
 # WebBrowserForAgent
 
+<!-- opendevs-badges:start -->
+[![License: MIT](https://img.shields.io/badge/License-MIT-64748b?style=flat)](LICENSE)
+<!-- opendevs-badges:end -->
+
 An MCP (Model Context Protocol) server that gives AI agents full control over a real web browser.
 
 Built on Playwright with support for Chromium, Firefox, and WebKit. Provides screenshot capture, mouse/keyboard input, multi-tab management, and an **Accessibility Map** — a text-based representation of all interactive elements on a page — enabling any AI model to operate a browser regardless of multimodal capabilities.
